@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 
 var (
 	torInstance *tor.Tor
+	datasheets  = make(map[string]bool)
 )
 
 type SubCategory struct {
@@ -38,7 +40,7 @@ type SearchResult struct {
 	Message string
 	Code    int
 	Result  struct {
-		Data             []map[string]interface{}
+		Data             []Product
 		CurrentPage      string `json:"current_page"`
 		LastPage         int    `json:"last_page"`
 		TotalPage        int    `json:"total_page"`
@@ -46,6 +48,44 @@ type SearchResult struct {
 		RecommendKeyword interface{} `json:"recommendKeyword"`
 		Msg              interface{}
 	}
+}
+
+type Product struct {
+	ID     int    `json:"id"`
+	Number string `json:"number"`
+	Info   struct {
+		Number        string  `json:"number"`
+		Unit          string  `json:"unit"`
+		Min           int     `json:"min"`
+		Max           int     `json:"max"`
+		PreUnit       int     `json:"pre_unit"`
+		Weight        float32 `json:"weight"`
+		PackageMethod string  `json:"packagemethod"`
+		Packaging     string  `json:"packaging"`
+		Step          int     `json:"step"`
+		Title         string  `json:"title"`
+	} `json:"info"`
+	URL          string `json:"url"`
+	Manufacturer struct {
+		EN   string `json:"en"`
+		Logo string `json:"logo"`
+	} `json:"manufacturer"`
+	Stock        int                 `json:"stock"`
+	Images       []map[string]string `json:"images"`
+	Datasheet    map[string]string   `json:"datasheet"`
+	Tags         []string            `json:"tags"`
+	Package      string              `json:"package"`
+	Categories   []string            `json:"categories"`
+	Status       string              `json:"status"`
+	AutoDown     interface{}         `json:"auto_down"` // can be string or bool
+	StockSZ      int                 `json:"stock_sz"`
+	StockJS      int                 `json:"stock_js"`
+	StockHK      int                 `json:"stock_hk"`
+	HotSort      int                 `json:"hot_sort"`
+	Attributes   interface{}         // map or array
+	DiscountType int                 `json:"discount_type"`
+	Description  string              `json:""`
+	Price        [][]interface{}     `json:"price"`
 }
 
 // newCircuit closes the remaining connections and builds a new identity
@@ -98,7 +138,7 @@ func searchProducts(page int, category int) (sr SearchResult, err error) {
 }
 
 func dlSub(c SubCategory) {
-	var partsu []map[string]interface{}
+	var partsu []Product
 
 	// scrape the first page of the category
 	// this gives us the number of product pages
@@ -142,6 +182,12 @@ func dlSub(c SubCategory) {
 
 		// append new parts
 		partsu = append(partsu, sr.Result.Data...)
+	}
+
+	for _, part := range partsu {
+		if len(part.Datasheet) > 0 {
+			datasheets[part.Datasheet["pdf"]] = true
+		}
 	}
 
 	// write the data nicely indented to disk
@@ -214,6 +260,23 @@ func main() {
 		log.Printf("Fetching category %s (%d)\n", c.Name, c.ID)
 		for _, sc := range c.Subs {
 			dlSub(sc)
+		}
+	}
+
+	// sort the datasheets and write the urls to file
+	f, err := os.Create("pdf/datasheets.txt")
+	if err != nil {
+		log.Fatalf("Could not write list of datasheets: %v", err)
+	}
+	urls := make([]string, 0, len(datasheets))
+	for k := range datasheets {
+		urls = append(urls, k)
+	}
+	sort.Strings(urls)
+	for _, url := range urls {
+		_, err := fmt.Fprintln(f, url)
+		if err != nil {
+			log.Fatalf("Could not write line: %v", err)
 		}
 	}
 
