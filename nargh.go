@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -46,8 +48,8 @@ type SearchResult struct {
 	}
 }
 
+// newCircuit closes the remaining connections and builds a new identity
 func newCircuit() error {
-	// close the remaining connections and build a new identity
 	http.DefaultClient.CloseIdleConnections()
 	return torInstance.Control.Signal("NEWNYM")
 }
@@ -61,16 +63,38 @@ func searchProducts(page int, category int) (sr SearchResult, err error) {
 	args.Set("show_icon", "false")
 	args.Set("search_content", "")
 
-	resp, err := http.PostForm("https://lcsc.com/api/products/search", args)
+	// retry a few times in case a circuit goes bad
+	for i := 0; i < 5; i++ {
+		var resp *http.Response
+		resp, err = http.PostForm("https://lcsc.com/api/products/search", args)
 
-	if err != nil {
+		if err != nil {
+			if err == io.EOF {
+				log.Println("Got EOF on request, creating a new circuit.")
+				err = newCircuit()
+				if err != nil {
+					return
+				}
+				continue
+			}
+			return
+		}
+		if err = json.NewDecoder(resp.Body).Decode(&sr); err != nil {
+			if err == io.EOF {
+				resp.Body.Close()
+				log.Println("Got EOF while reading, creating a new circuit.")
+				err = newCircuit()
+				if err != nil {
+					return
+				}
+				continue
+			}
+			return
+		}
 		return
 	}
-	if err = json.NewDecoder(resp.Body).Decode(&sr); err != nil {
-		return
-	}
 
-	return
+	return sr, errors.New("Giving up after five retries")
 }
 
 func dlSub(c SubCategory) {
@@ -135,6 +159,7 @@ func dlSub(c SubCategory) {
 
 func main() {
 	var categories []Category
+	var err error
 
 	log.Println(`
     _____ _____ _____ _____ _____ 
@@ -144,15 +169,24 @@ func main() {
    Your friendly LCSC scraper.
    `)
 
-	// load categories, these are from the JS in https://lcsc.com/products
-	// manually update if needed
-	b, err := ioutil.ReadFile("categories.json")
-	if err != nil {
-		log.Fatalf("Could not load categories.json (%v)\n", err)
-	}
+	if len(os.Args) == 2 {
+		// get a single category
+		id, err := strconv.Atoi(os.Args[1])
+		if err != nil {
+			log.Fatalf("Could not parse category to get: %s (%v)", os.Args[1], err)
+		}
+		categories = []Category{Category{Subs: []SubCategory{SubCategory{ID: id, Name: os.Args[1]}}}}
+	} else {
+		// load categories, these are from the JS in https://lcsc.com/products
+		// manually update if needed
+		b, err := ioutil.ReadFile("categories.json")
+		if err != nil {
+			log.Fatalf("Could not load categories.json (%v)\n", err)
+		}
 
-	if err := json.Unmarshal(b, &categories); err != nil {
-		log.Fatalf("Check categories.json for errors (%v)\n", err)
+		if err := json.Unmarshal(b, &categories); err != nil {
+			log.Fatalf("Check categories.json for errors (%v)\n", err)
+		}
 	}
 
 	// start TOR so that we can scrape it faster :3
@@ -182,4 +216,6 @@ func main() {
 			dlSub(sc)
 		}
 	}
+
+	log.Println("Scraping finished.")
 }
