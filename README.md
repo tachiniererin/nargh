@@ -6,7 +6,7 @@ That's all.
 
 ## Usage
 
-Please use the pre-processed data. It's being updated semi-regularly and (not-yet) hosted [here](https://notweb.site/lcsc.tar.zst).
+Please use the pre-processed data. It's being updated semi-regularly and hosted [here](https://github.com/tachiniererin/nargh/releases).
 
 To install it into `$GOPATH/bin` run:
 ```sh
