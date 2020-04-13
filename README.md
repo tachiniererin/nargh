@@ -16,6 +16,11 @@ go install github.com/tachiniererin/nargh
 
 Otherwise you can just clone the repo and run it with `go run nargh.go`.
 
+### Downloading and converting datasheets
+```sh
+find . -name "*.pdf" | xargs -I '{}' pdftotext -layout '{}'
+```
+
 
 ## Product categories
 
@@ -30,6 +35,5 @@ Because that was the sound I made when I realised what I did.
 ## TODO
 
 - Product Pictures
-- Datasheets
 - Scrape JLCSMT part library (which was the initial goal)
 - Make the terminal output a bit prettier.
