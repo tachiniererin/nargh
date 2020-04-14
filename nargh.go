@@ -103,7 +103,7 @@ func main() {
 	defer torInstance.Close()
 
 	// wait at most a minute to start tor
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), time.Minute)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer dialCancel()
 
 	// set up the connection to the proxy

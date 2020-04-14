@@ -5,4 +5,5 @@ pdf/*.aria2
 json/*.json
 vendor
 nargh
+pdftomeili
 scod/target
