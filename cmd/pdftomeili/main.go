@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"io/ioutil"
@@ -8,12 +9,14 @@ import (
 	"net/http"
 	"os/exec"
 	"path"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/meilisearch/meilisearch-go"
 	"github.com/zeebo/blake3"
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -98,6 +101,10 @@ func convertAndImport(client *meilisearch.Client, filePath string) error {
 }
 
 func importFolder(client *meilisearch.Client, path string) {
+	var maxWorkers = runtime.NumCPU()
+	var sem = semaphore.NewWeighted(int64(maxWorkers))
+	var ctx = context.TODO()
+
 	files, err := ioutil.ReadDir(path)
 	if err != nil {
 		log.Fatal(err)
@@ -105,7 +112,7 @@ func importFolder(client *meilisearch.Client, path string) {
 
 	fmt.Println("Pushing data to MeiliSearch...")
 
-	bar := pb.StartNew(len(files))
+	bar := pb.Full.Start(len(files))
 
 	for _, file := range files {
 		bar.Increment()
@@ -118,9 +125,22 @@ func importFolder(client *meilisearch.Client, path string) {
 			continue
 		}
 
-		if err := convertAndImport(client, path+file.Name()); err != nil {
-			log.Fatalf("could not convert %s: %v", file.Name(), err)
+		if err := sem.Acquire(ctx, 1); err != nil {
+			log.Printf("Failed to acquire semaphore to start new worker: %v", err)
+			break
 		}
+
+		go func(file string) {
+			defer sem.Release(1)
+			fn := path + file
+			if err := convertAndImport(client, fn); err != nil {
+				log.Fatalf("could not convert %s: %v", fn, err)
+			}
+		}(file.Name())
+	}
+
+	if err := sem.Acquire(ctx, int64(maxWorkers)); err != nil {
+		log.Fatalf("Failed to wait for workers to finish: %v", err)
 	}
 
 	bar.Finish()
