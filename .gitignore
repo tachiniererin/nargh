@@ -4,6 +4,6 @@ pdf/*.txt
 pdf/*.aria2
 json/*.json
 vendor
-nargh
-pdftomeili
+/nargh
+/pdftomeili
 scod/target

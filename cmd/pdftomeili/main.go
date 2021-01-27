@@ -20,6 +20,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
+// PDF MeiliSearch type
 type PDF struct {
 	ID       string
 	Filename string
@@ -84,7 +85,7 @@ func convertAndImport(client *meilisearch.Client, filePath string) error {
 
 	b = norm.NFC.Bytes(b)
 
-	h := blake3.NewSized(16)
+	h := blake3.New()
 	if _, err := h.Write(b); err != nil {
 		log.Fatal(err)
 	}

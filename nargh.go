@@ -1,14 +1,12 @@
 package main
 
 import (
-	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"sort"
-	"time"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/cretz/bine/tor"
@@ -24,7 +22,9 @@ var (
 	meiliHost      string
 	verbose        bool
 	totalPageCount int64
+	parallel       int
 	progress       *pb.ProgressBar
+	ErrRetry       = errors.New("retry last action")
 )
 
 func init() {
@@ -32,12 +32,7 @@ func init() {
 	flag.StringVar(&importPath, "path", "", "path to import json files from")
 	flag.BoolVar(&verbose, "verbose", false, "print more log messages")
 	flag.IntVar(&categoryID, "category", 0, "category id to fetch")
-}
-
-// newCircuit closes the remaining connections and builds a new identity
-func newCircuit() error {
-	http.DefaultClient.CloseIdleConnections()
-	return torInstance.Control.Signal("NEWNYM")
+	flag.IntVar(&parallel, "parallel", 1, "create n amount of tor nodes to send requests from")
 }
 
 // try, repeat, yeet
@@ -47,7 +42,7 @@ func try(λ func() error, check func(error) error, repeat func() error, tries in
 	for i := 0; i < tries; i++ {
 		err := λ()
 		if err != nil {
-			if err := check(err); err != nil {
+			if err := check(err); err != nil && !errors.Is(err, ErrRetry) {
 				return err
 			}
 			if err := check(repeat()); err != nil {
@@ -64,6 +59,8 @@ func main() {
 	var categories []Category
 	var err error
 
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	log.Println(`
     _____ _____ _____ _____ _____ 
    |   | |  _  | __  |   __|  |  |
@@ -74,6 +71,9 @@ func main() {
 
 	flag.Parse()
 
+	var scrapers = make([]*tsc, parallel)
+	var done = make([]chan bool, parallel)
+
 	if meiliHost != "" {
 		meiliClient = newMeiliClient()
 	}
@@ -83,48 +83,55 @@ func main() {
 		return
 	}
 
+	// start TOR so that we can scrape it faster :3
+	log.Println("Starting TOR...")
+	for i := 0; i < parallel; i++ {
+		log.Printf("Starting instance %d", i+1)
+		scrapers[i] = newTorInstance()
+		newLCSCConn(scrapers[i])()
+		done[i] = make(chan bool)
+	}
+
 	if categoryID != 0 {
 		// get a single category
-		categories = []Category{Category{Subs: []SubCategory{SubCategory{ID: categoryID, Name: ""}}}}
+		categories = []Category{{Subs: []SubCategory{{ID: categoryID, Name: ""}}}}
 	} else {
 		log.Println("Fetching categories from LCSC...")
-		categories, err = getCategories()
+		categories, err = getCategories(scrapers[0])
 		if err != nil {
 			log.Fatalln(err)
 		}
 	}
 
-	// start TOR so that we can scrape it faster :3
-	log.Println("Starting TOR...")
-	torInstance, err = tor.Start(context.TODO(), nil)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer torInstance.Close()
-
-	// wait at most a minute to start tor
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer dialCancel()
-
-	// set up the connection to the proxy
-	dialer, err := torInstance.Dialer(dialCtx, nil)
-	if err != nil {
-		log.Fatalf("Could not establish TOR Dialer: %v", err)
-	}
-
-	// set up the default http client with our tor proxy
-	http.DefaultClient = &http.Client{Transport: &http.Transport{DialContext: dialer.DialContext}}
-
 	progress = pb.Full.Start64(9903) // chosen by fair dice roll, err running it once i mean
+
+	workers := make(chan SubCategory, parallel)
+
+	for i := 0; i < parallel; i++ {
+		go func(o *tsc, pool chan SubCategory, done chan bool) {
+			select {
+			case <-done:
+				return
+			case sc := <-pool:
+				getSubCategory(o, sc)
+			}
+		}(scrapers[i], workers, done[i])
+	}
 
 	for _, c := range categories {
 		if verbose {
 			log.Printf("Fetching category %s (%d)\n", c.Name, c.ID)
 		}
 		for _, sc := range c.Subs {
-			getSubCategory(sc)
+			workers <- sc
 			progress.Increment()
 		}
+	}
+
+	for i := 0; i < parallel; i++ {
+		// wait for process to finish and close down the connection
+		done[i] <- true
+		scrapers[i].t.Close()
 	}
 
 	progress.Finish()

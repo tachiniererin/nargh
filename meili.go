@@ -14,6 +14,7 @@ import (
 	"github.com/meilisearch/meilisearch-go"
 )
 
+// Document type for MeiliSearch
 type Document struct {
 	ID        string
 	MPN       string
